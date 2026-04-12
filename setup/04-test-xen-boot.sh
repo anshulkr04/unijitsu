@@ -38,18 +38,37 @@ fi
 # ─── Locate the unikernel image ─────────────────────────────────────────────
 
 IMAGE_PATH_FILE="${SCRIPT_DIR}/.last-built-image"
+XEN_IMAGE=""
+
+# Check saved path from build step
 if [[ -f "$IMAGE_PATH_FILE" ]]; then
-    XEN_IMAGE=$(cat "$IMAGE_PATH_FILE")
-else
-    # Try common locations
-    XEN_IMAGE=$(find "${SCRIPT_DIR}/test-agent" -name "*xen*x86*" -type f 2>/dev/null | head -1)
+    SAVED=$(cat "$IMAGE_PATH_FILE")
+    if [[ -f "$SAVED" ]] && file "$SAVED" 2>/dev/null | grep -q ELF; then
+        XEN_IMAGE="$SAVED"
+    fi
+fi
+
+# Search in .unikraft/build/ (where kraft actually puts the binary)
+if [[ -z "$XEN_IMAGE" ]]; then
+    XEN_IMAGE=$(find "${SCRIPT_DIR}/test-agent" -path "*/.unikraft/build/*" \
+        -name "*_xen-x86_64" -type f ! -name "*.dbg" ! -name ".config*" \
+        2>/dev/null | head -1)
+fi
+
+# Verify it's an ELF
+if [[ -n "${XEN_IMAGE:-}" ]] && [[ -f "$XEN_IMAGE" ]]; then
+    if ! file "$XEN_IMAGE" 2>/dev/null | grep -q ELF; then
+        warn "$XEN_IMAGE is not an ELF binary, searching for correct one..."
+        XEN_IMAGE=""
+    fi
 fi
 
 if [[ -z "${XEN_IMAGE:-}" ]] || [[ ! -f "$XEN_IMAGE" ]]; then
-    err "Cannot find unikernel image. Run 03-build-test-unikernel.sh first."
+    err "Cannot find unikernel ELF image. Run 03-build-test-unikernel.sh first."
 fi
 
 log "Using image: $XEN_IMAGE"
+log "  Type: $(file "$XEN_IMAGE" | cut -d: -f2)"
 
 # ─── Detect network bridge ──────────────────────────────────────────────────
 
@@ -71,18 +90,48 @@ log "Using bridge: $BRIDGE"
 
 # ─── Assign a static IP for the unikernel ───────────────────────────────────
 
-# Get the bridge network info
-BRIDGE_IP=$(ip -4 addr show "$BRIDGE" | grep inet | awk '{print $2}' | cut -d/ -f1 | head -1)
+# Get the bridge IP and CIDR
+BRIDGE_IP_CIDR=$(ip -4 addr show "$BRIDGE" | grep inet | awk '{print $2}' | head -1)
+BRIDGE_IP=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f1)
+CIDR=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f2)
+
 if [[ -z "$BRIDGE_IP" ]]; then
-    BRIDGE_IP=$(ip -4 addr show | grep "inet 10\.\|inet 192\.\|inet 172\." | awk '{print $2}' | cut -d/ -f1 | head -1)
+    BRIDGE_IP_CIDR=$(ip -4 addr show | grep -E "inet [0-9]" | grep -v 127.0.0 | awk '{print $2}' | head -1)
+    BRIDGE_IP=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f1)
+    CIDR=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f2)
 fi
+
+# Use the ACTUAL gateway from routing table (not derived — that broke on /23 networks)
+GATEWAY=$(ip route | grep default | awk '{print $3}' | head -1)
+
+# Convert CIDR to netmask
+cidr_to_netmask() {
+    local cidr=$1
+    local mask=""
+    local full_octets=$((cidr / 8))
+    local partial=$((cidr % 8))
+    for i in 1 2 3 4; do
+        if [[ $i -le $full_octets ]]; then
+            mask+="255"
+        elif [[ $i -eq $((full_octets + 1)) ]]; then
+            mask+="$((256 - (1 << (8 - partial))))"
+        else
+            mask+="0"
+        fi
+        [[ $i -lt 4 ]] && mask+="."
+    done
+    echo "$mask"
+}
+NETMASK=$(cidr_to_netmask "${CIDR:-24}")
 
 # Derive a unikernel IP (use .100 in the same subnet)
 UNIKERNEL_IP=$(echo "$BRIDGE_IP" | sed 's/\.[0-9]*$/.100/')
-GATEWAY=$(echo "$BRIDGE_IP" | sed 's/\.[0-9]*$/.1/')
-NETMASK="255.255.255.0"
 
-log "Unikernel will get IP: $UNIKERNEL_IP (gateway: $GATEWAY)"
+log "Network config:"
+log "  Bridge IP:      $BRIDGE_IP/$CIDR"
+log "  Gateway:        $GATEWAY (from routing table)"
+log "  Netmask:        $NETMASK"
+log "  Unikernel IP:   $UNIKERNEL_IP"
 
 # ─── Create Xen domain config ───────────────────────────────────────────────
 
@@ -101,7 +150,7 @@ cat > "$XEN_CFG" << EOF
 
 # --- Domain basics ---
 name    = "$VM_NAME"
-type    = "pvh"
+type    = "pv"
 kernel  = "$XEN_IMAGE"
 
 # --- Resources ---

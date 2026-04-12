@@ -96,8 +96,19 @@ KCONFIG
 # ─── Find the built image ───────────────────────────────────────────────────
 
 log "Looking for built image..."
-XEN_IMAGE=$(find "$AGENT_DIR" -name "*xen*x86_64*" -type f 2>/dev/null | \
-            grep -v '\.o$' | grep -v '\.d$' | head -1)
+
+# kraft stores builds in .unikraft/build/ — look there first
+# Filter out: .config files (text metadata), .dbg (debug), .o (objects), .d (deps)
+XEN_IMAGE=$(find "$AGENT_DIR" -path "*/.unikraft/build/*" -name "*_xen-x86_64" \
+    -type f ! -name "*.dbg" ! -name "*.o" ! -name "*.d" ! -name ".config*" \
+    2>/dev/null | head -1)
+
+if [[ -z "$XEN_IMAGE" ]]; then
+    # Fallback: any ELF binary with xen in the name
+    XEN_IMAGE=$(find "$AGENT_DIR" -name "*_xen-x86_64" -type f \
+        ! -name "*.dbg" ! -name "*.o" ! -name "*.d" ! -name ".config*" \
+        2>/dev/null | head -1)
+fi
 
 if [[ -z "$XEN_IMAGE" ]]; then
     # Also check kraft's default output location
@@ -108,9 +119,23 @@ if [[ -z "$XEN_IMAGE" ]]; then
     warn "Could not auto-detect the built image."
     warn "Check the build output above for the image path."
     warn "Common locations:"
-    warn "  ./build/test-agent_xen-x86_64"
+    warn "  .unikraft/build/test-agent_xen-x86_64"
     warn "  ~/.local/share/kraftkit/..."
     exit 1
+fi
+
+# Verify it's actually an ELF binary, not a config file
+FILE_TYPE=$(file "$XEN_IMAGE" 2>/dev/null || echo "unknown")
+if ! echo "$FILE_TYPE" | grep -q "ELF"; then
+    warn "Found $XEN_IMAGE but it's not an ELF binary: $FILE_TYPE"
+    warn "Looking for the actual kernel..."
+    # Try harder
+    XEN_IMAGE=$(find "$AGENT_DIR" -name "*_xen-x86_64" -type f 2>/dev/null | while read f; do
+        file "$f" 2>/dev/null | grep -q ELF && echo "$f" && break
+    done)
+    if [[ -z "$XEN_IMAGE" ]]; then
+        err "Could not find a valid ELF kernel binary."
+    fi
 fi
 
 IMAGE_SIZE=$(du -h "$XEN_IMAGE" | awk '{print $1}')

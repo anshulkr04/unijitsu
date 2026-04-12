@@ -7,18 +7,21 @@
  *   - POSIX sockets
  *   - Basic I/O
  *
- * This is NOT production code — it's the minimum viable unikernel to
- * prove the Xen ↔ Unikraft ↔ Jitsu pipeline works.
+ * UNIKERNEL CONSTRAINTS (no full libc):
+ *   - No getenv() — port is hardcoded
+ *   - No perror()  — use printf() for errors
+ *   - No filesystem, no threads, no fork
+ *   - Network initializes asynchronously on Xen PV
+ *   - Must yield to cooperative scheduler for network to come up
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <time.h>
+#include <uk/sched.h>  /* uk_sched_yield — needed for cooperative scheduling */
 
 #define PORT 8080
 #define BUF_SIZE 4096
@@ -46,6 +49,20 @@ static const char *NOT_FOUND_RESPONSE =
     "Connection: close\r\n"
     "\r\n"
     "{\"error\":\"not found\"}\r\n";
+
+/*
+ * Yield to the cooperative scheduler many times.
+ * This is CRITICAL on Xen PV: the netfront driver and lwIP stack
+ * initialize via event channel callbacks that only run when the
+ * scheduler processes them. A busy-wait spin loop will NOT work
+ * because the scheduler never gets a chance to run.
+ */
+static void yield_delay(int iterations)
+{
+    for (int i = 0; i < iterations; i++) {
+        uk_sched_yield();
+    }
+}
 
 static void handle_request(int client_fd)
 {
@@ -82,45 +99,61 @@ static void handle_request(int client_fd)
     close(client_fd);
 }
 
-int main(int argc, char *argv[])
+int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
-    int port = PORT;
-    const char *port_env = getenv("PORT");
-    if (port_env) {
-        port = atoi(port_env);
-    }
-
     printf("=== Unikraft Test Agent ===\n");
-    printf("Starting HTTP server on port %d...\n", port);
+    printf("Starting HTTP server on port %d...\n", PORT);
 
-    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        perror("socket");
-        return 1;
+    /*
+     * On Xen PV with cooperative scheduling, the network stack (netfront +
+     * lwIP) initializes via Xen event channel callbacks. These only fire
+     * when we yield to the scheduler. We MUST yield before attempting
+     * socket(), otherwise the network isn't ready and socket() fails.
+     */
+    printf("Waiting for network stack to initialize...\n");
+    yield_delay(1000);  /* Give scheduler time to process netfront init */
+
+    int server_fd = -1;
+    int retries = 20;
+    while (server_fd < 0 && retries > 0) {
+        server_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd < 0) {
+            printf("socket() failed, yielding to scheduler... (%d attempts left)\n", retries);
+            yield_delay(500);  /* Each retry: yield 500 times */
+            retries--;
+        }
     }
+    if (server_fd < 0) {
+        printf("Error: could not create socket after retries\n");
+        printf("Entering idle loop (VM stays alive for debugging)\n");
+        printf("Debug with: xl console test-agent\n");
+        while (1) { uk_sched_yield(); }
+    }
+    printf("Socket created (fd=%d)\n", server_fd);
 
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_addr.s_addr = INADDR_ANY,
-        .sin_port = htons(port),
-    };
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(PORT);
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        close(server_fd);
-        return 1;
+        printf("Error: bind() failed\n");
+        printf("Entering idle loop for debugging\n");
+        while (1) { uk_sched_yield(); }
     }
+    printf("Bound to 0.0.0.0:%d\n", PORT);
 
     if (listen(server_fd, BACKLOG) < 0) {
-        perror("listen");
-        close(server_fd);
-        return 1;
+        printf("Error: listen() failed\n");
+        printf("Entering idle loop for debugging\n");
+        while (1) { uk_sched_yield(); }
     }
 
-    printf("Listening on 0.0.0.0:%d\n", port);
+    printf("Listening on 0.0.0.0:%d\n", PORT);
     printf("  GET  /health  — health check\n");
     printf("  POST /invoke  — agent invocation\n");
     printf("Ready.\n");
@@ -132,7 +165,8 @@ int main(int argc, char *argv[])
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr,
                                &client_len);
         if (client_fd < 0) {
-            perror("accept");
+            /* yield and retry — don't exit */
+            uk_sched_yield();
             continue;
         }
 
