@@ -151,11 +151,21 @@ fi
 
 log "Domain ID: $DOMAIN_ID"
 
-# ─── Check console output ───────────────────────────────────────────────────
+# ─── Check console output (SSH-safe: use xl dmesg instead of xl console) ────
+#
+# NOTE: We do NOT use 'xl console' here because it opens an interactive
+# terminal that hangs/freezes SSH sessions. Instead we use 'xl dmesg'
+# and log files to check unikernel output.
+#
 
 log ""
-log "Console output (first 5 seconds):"
-timeout 5 xl console "$VM_NAME" 2>/dev/null || true
+log "Checking for unikernel boot messages..."
+# xl dmesg shows Xen hypervisor messages (includes domU boot info)
+xl dmesg 2>/dev/null | tail -20 || true
+log ""
+log "(To see full unikernel console output, run in a separate SSH session:)"
+log "  sudo xl console $VM_NAME"
+log "  (Press Ctrl+] to detach without killing the VM)"
 log ""
 
 # ─── Test connectivity ───────────────────────────────────────────────────────

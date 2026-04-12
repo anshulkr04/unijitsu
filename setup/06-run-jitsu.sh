@@ -77,6 +77,35 @@ log "  TTL:    ${TTL}s (destroy after ${TTL}s idle)"
 
 xl destroy "$VM_NAME" 2>/dev/null || true
 
+# ─── Handle systemd-resolved conflict on port 53 ────────────────────────────
+# Ubuntu 22.04 runs systemd-resolved on 127.0.0.53:53 by default.
+# Jitsu needs port 53. We have two options:
+#   Option A: Run Jitsu on a different port (5353) — no system changes
+#   Option B: Disable systemd-resolved stub listener — Jitsu gets port 53
+# We use Option A by default (safer for SSH), with a flag to enable B.
+
+JITSU_PORT=5353
+if [[ "${USE_PORT_53:-}" == "1" ]]; then
+    log "Disabling systemd-resolved stub listener to free port 53..."
+    if systemctl is-active systemd-resolved &>/dev/null; then
+        # Preserve DNS resolution by pointing to real upstream
+        mkdir -p /etc/systemd/resolved.conf.d
+        cat > /etc/systemd/resolved.conf.d/no-stub.conf << 'RESOLVED'
+[Resolve]
+DNSStubListener=no
+DNS=8.8.8.8 1.1.1.1
+RESOLVED
+        systemctl restart systemd-resolved
+        # Point /etc/resolv.conf to the real upstream
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+        log "systemd-resolved stub disabled. DNS still works via upstream."
+    fi
+    JITSU_PORT=53
+else
+    log "Using port $JITSU_PORT (to avoid systemd-resolved conflict)"
+    log "To use port 53 instead: USE_PORT_53=1 sudo bash 06-run-jitsu.sh"
+fi
+
 # ─── Start Jitsu ─────────────────────────────────────────────────────────────
 
 log ""
@@ -84,14 +113,14 @@ log "═════════════════════════
 log "  Starting Jitsu DNS-triggered orchestrator"
 log "═══════════════════════════════════════════════════════════════"
 log ""
-log "  Jitsu is now listening on UDP port 53 for DNS queries."
+log "  Jitsu is now listening on UDP port $JITSU_PORT for DNS queries."
 log "  It will boot the unikernel when it receives a query for:"
 log ""
 log "    $DNS_NAME"
 log ""
-log "  TEST IT (from another terminal):"
+log "  TEST IT (open a SECOND SSH session to the server):"
 log ""
-log "    dig @127.0.0.1 $DNS_NAME"
+log "    dig @127.0.0.1 -p $JITSU_PORT $DNS_NAME"
 log "    # → Jitsu boots the unikernel and returns $UNIKERNEL_IP"
 log ""
 log "    curl http://${UNIKERNEL_IP}:8080/health"
@@ -104,6 +133,8 @@ log "    xl list"
 log "    # → test-agent should disappear after TTL"
 log ""
 log "  Press Ctrl+C to stop Jitsu."
+log "  (Or run with nohup to keep it alive after you disconnect SSH:)"
+log "    nohup sudo bash 06-run-jitsu.sh > /var/log/jitsu.log 2>&1 &"
 log ""
 
 # Determine which backend to use
@@ -119,7 +150,7 @@ eval $(opam env --switch=jitsu 2>/dev/null) || true
 exec "$JITSU_BIN" \
     -x "$BACKEND" \
     -f \
-    -l 53 \
+    -l "$JITSU_PORT" \
     -m destroy \
     -t "$TTL" \
     "dns=${DNS_NAME},ip=${UNIKERNEL_IP},kernel=${XEN_IMAGE},memory=${VM_MEMORY},name=${VM_NAME},nic=${BRIDGE}"

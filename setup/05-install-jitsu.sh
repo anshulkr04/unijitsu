@@ -33,11 +33,6 @@ sudo apt-get install -y \
     libssl-dev \
     libev-dev \
     libxen-dev \
-    libxenctrl-dev \
-    libxenguest-dev \
-    libxenlight-dev \
-    libxentoollog-dev \
-    libxenstore-dev \
     libvirt-dev \
     libxml2-dev \
     git \
