@@ -36,6 +36,9 @@ unikraft:
     CONFIG_LIBUKSCHED: 'y'
     CONFIG_LIBUKSCHEDCOOP: 'y'
 
+    # Time (provides sleep/nanosleep for yielding)
+    CONFIG_LIBPOSIX_TIME: 'y'
+
 targets:
   - platform: xen
     architecture: x86_64
