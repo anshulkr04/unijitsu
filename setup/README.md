@@ -19,30 +19,27 @@ what could go wrong and how we protect against it:
 
 | Step | What Could Break SSH | Our Protection |
 |------|---------------------|----------------|
-| **Step 1 (Xen install + reboot)** | GRUB boots Xen, but Xen's network driver doesn't work with your NIC → no SSH | **Auto-recovery**: a systemd service checks network 3 min after boot. If it fails, the server auto-reboots to the non-Xen kernel. GRUB also has a 10s visible menu for manual IPMI/KVM recovery. |
-| **Step 1 (bridge config)** | Bridge misconfigured → server gets a different IP or no IP | **IP preservation**: the script detects whether your IP is static or DHCP and writes the bridge config accordingly. Static IPs are explicitly assigned to xenbr0. |
+| **Step 1 (Xen install + reboot)** | GRUB boots Xen, but Xen's network driver doesn't work with your NIC → no SSH | **Minimal changes**: Step 1 ONLY installs Xen + GRUB config. No networking changes. If SSH dies after reboot, use provider console to pick non-Xen boot entry. |
+| **Step 1b (bridge config)** | Bridge misconfigured → server gets a different IP or no IP | **`netplan try`**: the script uses `netplan try --timeout 120` which auto-reverts the config if you don't confirm within 120 seconds. If SSH dies, just wait 2 minutes and it comes back. |
 | **Step 4 (xl console)** | `xl console` opens interactive terminal that freezes SSH | **Removed**: we use `xl dmesg` and log files instead. Console only shown as a manual debugging option. |
 | **Step 6 (port 53)** | systemd-resolved already uses port 53 → Jitsu fails to bind | **Alternate port**: Jitsu defaults to port 5353. Use `USE_PORT_53=1` flag only if you explicitly want port 53. |
 
 ### Before You Reboot (Step 1)
 
-1. **Note your server's current IP**: `ip addr show` — this IP will be on `xenbr0` after reboot
-2. **Know your IPMI/iDRAC/iLO URL**: Ask your hosting provider if you don't have it. This is your emergency console if SSH dies.
-3. **Consider a serial console**: Some providers offer serial over SSH (e.g., `ssh serial@provider`)
+1. **Note your server's current IP**: `ip addr show` — this IP will be on `xenbr0` after step 1b
+2. **Know your provider console URL**: Vultr web console, Hetzner rescue mode, etc. This is your emergency access if SSH dies.
 
 ### If You Get Locked Out
 
 ```bash
-# Option 1: Wait 3 minutes — auto-recovery will reboot to non-Xen kernel
+# After Step 1 reboot:
+#   Use provider console to pick non-Xen boot entry in GRUB
 
-# Option 2: Use IPMI/iDRAC to access GRUB menu
-#   - Select the Ubuntu entry WITHOUT "Xen" in the name
-#   - Boot into regular kernel, SSH back in, debug
+# After Step 1b bridge change:
+#   WAIT 2 MINUTES — netplan try auto-reverts if you don't confirm
+#   SSH will come back with the old config
 
-# Option 3: Ask your hosting provider to reboot into rescue mode
-
-# Option 4: If you have iDRAC/IPMI, set next boot to non-Xen:
-#   ipmitool chassis bootdev disk  # resets to default boot
+# Last resort: Ask your hosting provider to reboot into rescue mode
 ```
 
 ### Running Long Processes Over SSH
@@ -100,13 +97,10 @@ sudo bash setup/01-install-xen.sh
 ```
 
 **What it does:**
-- Installs Xen hypervisor 4.17+ packages
-- Installs xl toolstack, Xen dev headers, bridge-utils
-- Configures GRUB to boot Xen (with 10s timeout for recovery)
-- Sets up dom0 memory limit (leaves rest for unikernels)
-- Creates network bridge (xenbr0) — **preserves your SSH IP**
-- Installs auto-recovery service (reboots to non-Xen if network fails)
-- **Requires a REBOOT** — after reboot, Ubuntu runs as Xen dom0
+- Installs Xen hypervisor packages (xen-hypervisor, xl toolstack, dev headers)
+- Configures GRUB to boot Xen (dom0_mem=8192M)
+- Enables xencommons service
+- **Does NOT touch networking** — bridge is a separate step
 
 **Reboot and reconnect:**
 ```bash
@@ -117,7 +111,26 @@ ssh user@your-server-ip
 # Verify Xen is running:
 xl info          # Should show Xen version, free memory, nr_cpus
 xl list          # Should show Domain-0 running
+```
+
+### Step 1b: Set Up Network Bridge (SAFE)
+
+```bash
+sudo bash setup/01b-setup-bridge.sh
+```
+
+**What it does:**
+- Detects your current interface, IP, and gateway
+- Backs up existing netplan configs
+- Creates xenbr0 bridge with your server's IP
+- Uses `netplan try --timeout 120` (120-second safety timeout)
+- **If SSH dies → config auto-reverts in 120 seconds**
+- You must press ENTER to confirm if SSH stays alive
+
+**Verify:**
+```bash
 brctl show       # Should show xenbr0 with your NIC attached
+ip addr show xenbr0  # Should show your server's IP
 ```
 
 ### Step 2: Install Unikraft Toolchain
@@ -260,7 +273,8 @@ sleep 65 && xl list
 /Users/anshulkumar/jitsu/
 ├── setup/                    # ← You are here
 │   ├── README.md             # This file
-│   ├── 01-install-xen.sh
+│   ├── 01-install-xen.sh     # Xen only (no networking)
+│   ├── 01b-setup-bridge.sh   # Bridge setup (uses netplan try)
 │   ├── 02-install-unikraft.sh
 │   ├── 03-build-test-unikernel.sh
 │   ├── 04-test-xen-boot.sh
