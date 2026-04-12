@@ -1,0 +1,41 @@
+# Kraftfile for test-agent unikernel
+#
+# This builds a minimal HTTP server unikernel targeting Xen x86_64.
+# It includes the lwIP network stack and POSIX compatibility layer.
+
+spec: v0.6
+
+unikraft:
+  version: stable
+  kconfig:
+    # Core
+    CONFIG_LIBUKBOOT: 'y'
+    CONFIG_LIBNOLIBC: 'y'
+    CONFIG_LIBPOSIX_SOCKET: 'y'
+    CONFIG_LIBPOSIX_PROCESS: 'y'
+    CONFIG_LIBPOSIX_USER: 'y'
+    CONFIG_LIBPOSIX_SYSINFO: 'y'
+
+    # Network stack (lwIP)
+    CONFIG_LIBLWIP: 'y'
+    CONFIG_LWIP_SOCKET: 'y'
+    CONFIG_LWIP_IPV4: 'y'
+    CONFIG_LWIP_TCP: 'y'
+    CONFIG_LWIP_DHCP: 'y'
+    CONFIG_LWIP_DNS: 'y'
+
+    # Xen-specific
+    CONFIG_XEN_NETFRONT: 'y'
+
+    # Memory
+    CONFIG_LIBUKALLOC: 'y'
+    CONFIG_LIBUKALLOCBBUDDY: 'y'
+    CONFIG_LIBUKFALLOCBUDDY: 'y'
+
+    # Scheduler
+    CONFIG_LIBUKSCHED: 'y'
+    CONFIG_LIBUKSCHEDCOOP: 'y'
+
+targets:
+  - platform: xen
+    architecture: x86_64

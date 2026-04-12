@@ -1,0 +1,3 @@
+$(eval $(call addlib,apptestagent))
+
+APPTESTAGENT_SRCS-y += $(APPTESTAGENT_BASE)/main.c
