@@ -142,6 +142,10 @@ VM_NAME="test-agent"
 xl destroy "$VM_NAME" 2>/dev/null || true
 sleep 1
 
+# Unikraft cmdline format: netdev.ip=<IP/CIDR>:<GW>:<DNS>
+# See lib/uknetdev/netdev.c — UK_LIBPARAM_PARAM_ARR_ALIAS(ip, ...)
+UK_NETDEV_IP="${UNIKERNEL_IP}/${CIDR}:${GATEWAY}:8.8.8.8"
+
 cat > "$XEN_CFG" << EOF
 #
 # Xen domain configuration for test-agent unikernel
@@ -154,16 +158,16 @@ type    = "pv"
 kernel  = "$XEN_IMAGE"
 
 # --- Resources ---
-memory  = 32
+memory  = 64
 vcpus   = 1
 
 # --- Network ---
 vif     = ['bridge=$BRIDGE']
 
 # --- Boot command line ---
-# Pass network config to the unikernel via command line
-# Unikraft lwIP reads these for static IP configuration
-cmdline = "netdev.ipv4_addr=$UNIKERNEL_IP netdev.ipv4_gw_addr=$GATEWAY netdev.ipv4_subnet_mask=$NETMASK --"
+# Unikraft netdev.ip format: IP/CIDR:gateway:dns0:dns1:hostname:domain
+# See: lib/uknetdev/netdev.c UK_LIBPARAM_PARAM_ARR_ALIAS
+cmdline = "netdev.ip=$UK_NETDEV_IP --"
 
 # --- Console ---
 # Enable Xen console for debugging
@@ -171,6 +175,7 @@ serial  = "pty"
 EOF
 
 log "Xen config written to $XEN_CFG"
+log "  cmdline: netdev.ip=$UK_NETDEV_IP"
 
 # ─── Boot the unikernel ─────────────────────────────────────────────────────
 
@@ -209,10 +214,17 @@ log "Domain ID: $DOMAIN_ID"
 
 log ""
 log "Checking for unikernel boot messages..."
-# xl dmesg shows Xen hypervisor messages (includes domU boot info)
-xl dmesg 2>/dev/null | tail -20 || true
+# Capture guest console output (with timeout so it doesn't hang)
+# xl console is interactive, so we use a timeout + background approach
+log "--- Guest console (first 5 seconds) ---"
+timeout 8 xl console "$VM_NAME" 2>/dev/null &
+CONSOLE_PID=$!
+sleep 5
+kill $CONSOLE_PID 2>/dev/null || true
+wait $CONSOLE_PID 2>/dev/null || true
+log "--- End guest console ---"
 log ""
-log "(To see full unikernel console output, run in a separate SSH session:)"
+log "(For live console, run in ANOTHER SSH session:)"
 log "  sudo xl console $VM_NAME"
 log "  (Press Ctrl+] to detach without killing the VM)"
 log ""
@@ -267,9 +279,22 @@ log ""
 
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 
-log "Cleaning up — destroying test domain..."
-xl destroy "$VM_NAME" 2>/dev/null || true
-log "Domain destroyed."
+if [[ "$HTTP_RESPONSE" == "200" ]]; then
+    log "Test passed! Cleaning up — destroying test domain..."
+    xl destroy "$VM_NAME" 2>/dev/null || true
+    log "Domain destroyed."
+else
+    warn ""
+    warn "Networking not working yet. Keeping domain ALIVE for debugging."
+    warn ""
+    warn "Debug commands (run in another SSH session):"
+    warn "  sudo xl console $VM_NAME          # see app output"
+    warn "  sudo xl network-list $VM_NAME     # check vif"
+    warn "  brctl show xenbr0                  # check bridge members"
+    warn "  ping $UNIKERNEL_IP                 # test connectivity"
+    warn ""
+    warn "When done:  sudo xl destroy $VM_NAME"
+fi
 
 log ""
 log "  NEXT STEP: bash 05-install-jitsu.sh"

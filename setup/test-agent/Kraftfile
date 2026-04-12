@@ -27,6 +27,9 @@ unikraft:
     # Xen-specific
     CONFIG_XEN_NETFRONT: 'y'
 
+    # Network device config via cmdline (netdev.ip=...)
+    CONFIG_LIBUKNETDEV_EINFO_LIBPARAM: 'y'
+
     # Memory
     CONFIG_LIBUKALLOC: 'y'
     CONFIG_LIBUKALLOCBBUDDY: 'y'
