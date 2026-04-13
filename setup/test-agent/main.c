@@ -93,7 +93,7 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
      * never gets a chance to run.
      */
     printf("Waiting for network stack to initialize...\n");
-    sleep(2);  /* Let scheduler process netfront + lwIP init */
+    sleep(15);  /* lwIP + netfront init takes several seconds on Xen PV */
 
     int server_fd = -1;
     int retries = 10;
