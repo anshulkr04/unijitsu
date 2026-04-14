@@ -71,67 +71,47 @@ log "Using image: $XEN_IMAGE"
 log "  Type: $(file "$XEN_IMAGE" | cut -d: -f2)"
 
 # ─── Detect network bridge ──────────────────────────────────────────────────
+#
+# We use a PRIVATE bridge (ukbr0, 10.0.0.1/24) — NOT the public-IP bridge.
+# Vultr/cloud providers use MAC anti-spoofing and silently drop traffic from
+# unregistered IPs on the public bridge.  Using a private subnet + NAT avoids
+# this entirely.  Run 01c-setup-unikernel-bridge.sh first.
 
-BRIDGE="xenbr0"
-if ! brctl show "$BRIDGE" &>/dev/null; then
-    # Try alternative bridge names
-    BRIDGE=$(brctl show 2>/dev/null | awk 'NR>1 && $1 != "" {print $1}' | head -1)
-    if [[ -z "$BRIDGE" ]]; then
-        warn "No network bridge found. Creating a temporary one..."
-        PRIMARY_IF=$(ip route | grep default | awk '{print $5}' | head -1)
-        BRIDGE="xenbr0"
-        brctl addbr "$BRIDGE" 2>/dev/null || true
-        brctl addif "$BRIDGE" "$PRIMARY_IF" 2>/dev/null || true
-        ip link set "$BRIDGE" up 2>/dev/null || true
-    fi
+BRIDGE_FILE="${SCRIPT_DIR}/.unikernel-bridge"
+GW_FILE="${SCRIPT_DIR}/.unikernel-gateway"
+
+if [[ -f "$BRIDGE_FILE" ]]; then
+    BRIDGE=$(cat "$BRIDGE_FILE")
+else
+    BRIDGE="ukbr0"
 fi
 
-log "Using bridge: $BRIDGE"
-
-# ─── Assign a static IP for the unikernel ───────────────────────────────────
-
-# Get the bridge IP and CIDR
-BRIDGE_IP_CIDR=$(ip -4 addr show "$BRIDGE" | grep inet | awk '{print $2}' | head -1)
-BRIDGE_IP=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f1)
-CIDR=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f2)
-
-if [[ -z "$BRIDGE_IP" ]]; then
-    BRIDGE_IP_CIDR=$(ip -4 addr show | grep -E "inet [0-9]" | grep -v 127.0.0 | awk '{print $2}' | head -1)
-    BRIDGE_IP=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f1)
-    CIDR=$(echo "$BRIDGE_IP_CIDR" | cut -d/ -f2)
+# Ensure the private bridge exists
+if ! ip link show "$BRIDGE" &>/dev/null; then
+    err "Private bridge '$BRIDGE' not found.\n" \
+        "Run first:  sudo bash setup/01c-setup-unikernel-bridge.sh"
 fi
 
-# Use the ACTUAL gateway from routing table (not derived — that broke on /23 networks)
-GATEWAY=$(ip route | grep default | awk '{print $3}' | head -1)
+log "Using bridge: $BRIDGE (private unikernel network)"
 
-# Convert CIDR to netmask
-cidr_to_netmask() {
-    local cidr=$1
-    local mask=""
-    local full_octets=$((cidr / 8))
-    local partial=$((cidr % 8))
-    for i in 1 2 3 4; do
-        if [[ $i -le $full_octets ]]; then
-            mask+="255"
-        elif [[ $i -eq $((full_octets + 1)) ]]; then
-            mask+="$((256 - (1 << (8 - partial))))"
-        else
-            mask+="0"
-        fi
-        [[ $i -lt 4 ]] && mask+="."
-    done
-    echo "$mask"
-}
-NETMASK=$(cidr_to_netmask "${CIDR:-24}")
+# ─── Private network addressing ──────────────────────────────────────────────
+# dom0 is 10.0.0.1 (gateway)  — set by 01c-setup-unikernel-bridge.sh
+# Unikernel gets 10.0.0.100   — static, no DHCP needed
 
-# Derive a unikernel IP (use .100 in the same subnet)
-UNIKERNEL_IP=$(echo "$BRIDGE_IP" | sed 's/\.[0-9]*$/.100/')
+if [[ -f "$GW_FILE" ]]; then
+    GATEWAY=$(cat "$GW_FILE")
+else
+    GATEWAY="10.0.0.1"
+fi
+
+CIDR="24"
+UNIKERNEL_IP="10.0.0.100"
 
 log "Network config:"
-log "  Bridge IP:      $BRIDGE_IP/$CIDR"
-log "  Gateway:        $GATEWAY (from routing table)"
-log "  Netmask:        $NETMASK"
-log "  Unikernel IP:   $UNIKERNEL_IP"
+log "  Bridge:         $BRIDGE"
+log "  dom0 (gateway): $GATEWAY"
+log "  Unikernel IP:   $UNIKERNEL_IP/$CIDR"
+log "  (dom0 NATs unikernel traffic to the internet via xenbr0)"
 
 # ─── Create Xen domain config ───────────────────────────────────────────────
 
@@ -205,12 +185,15 @@ fi
 
 log "Domain ID: $DOMAIN_ID"
 
-# ─── Check console output (SSH-safe: use xl dmesg instead of xl console) ────
-#
-# NOTE: We do NOT use 'xl console' here because it opens an interactive
-# terminal that hangs/freezes SSH sessions. Instead we use 'xl dmesg'
-# and log files to check unikernel output.
-#
+# ─── Show vif attachment (important: proves bridge wiring) ──────────────────
+
+log ""
+log "Network interface status:"
+xl network-list "$VM_NAME" 2>/dev/null || warn "xl network-list not available"
+log ""
+log "Bridge members ($BRIDGE should list a vif here):"
+brctl show "$BRIDGE" 2>/dev/null || true
+log ""
 
 log ""
 log "Checking for unikernel boot messages..."
@@ -229,35 +212,50 @@ log "  sudo xl console $VM_NAME"
 log "  (Press Ctrl+] to detach without killing the VM)"
 log ""
 
+# The unikernel sleeps 15s before attempting socket().
+# Wait here so connectivity tests don't run too early.
+log "Waiting 20s for unikernel network to finish initializing..."
+for i in {1..20}; do
+    printf "\r[+] %2d/20s..." "$i"
+    sleep 1
+done
+echo ""
+
 # ─── Test connectivity ───────────────────────────────────────────────────────
 
-log "Waiting for unikernel network to come up..."
-for i in {1..30}; do
+log "Testing reachability..."
+for i in {1..45}; do
     if ping -c 1 -W 1 "$UNIKERNEL_IP" &>/dev/null; then
-        log "Unikernel is responding to ping!"
+        log "Unikernel is responding to ping after ${i}s!"
         break
     fi
-    if [[ $i -eq 30 ]]; then
-        warn "Unikernel not responding to ping after 30s."
-        warn "This may be normal if ICMP is not supported."
-        warn "Trying HTTP instead..."
+    if [[ $i -eq 45 ]]; then
+        warn "Unikernel not responding to ping after 45s."
+        warn "ICMP may not be enabled in lwIP config — trying HTTP directly."
     fi
     sleep 1
 done
 
 # Test HTTP
-log "Testing HTTP endpoint..."
-HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-    "http://${UNIKERNEL_IP}:8080/health" --connect-timeout 5 2>/dev/null || echo "000")
+log "Testing HTTP endpoint (curl with 10s timeout)..."
+HTTP_RESPONSE=$(curl -s -o /tmp/uk_response.txt -w "%{http_code}" \
+    "http://${UNIKERNEL_IP}:8080/health" --connect-timeout 10 --max-time 15 \
+    2>/dev/null || echo "000")
 
 if [[ "$HTTP_RESPONSE" == "200" ]]; then
     log "HTTP health check: 200 OK"
-    BODY=$(curl -s "http://${UNIKERNEL_IP}:8080/health" --connect-timeout 5 2>/dev/null)
-    log "Response: $BODY"
+    log "Response: $(cat /tmp/uk_response.txt 2>/dev/null)"
 else
     warn "HTTP health check returned: $HTTP_RESPONSE"
-    warn "The unikernel may need DHCP or different network config."
-    warn "Debug with: xl console $VM_NAME"
+    warn ""
+    warn "─── Post-wait console snapshot (shows what unikernel did after sleep) ───"
+    timeout 6 xl console "$VM_NAME" 2>/dev/null &
+    CONSOLE_PID2=$!
+    sleep 4
+    kill $CONSOLE_PID2 2>/dev/null || true
+    wait $CONSOLE_PID2 2>/dev/null || true
+    warn "─── End snapshot ───"
+    warn ""
 fi
 
 # ─── Benchmark ───────────────────────────────────────────────────────────────
@@ -290,9 +288,11 @@ else
     warn "Debug commands (run in another SSH session):"
     warn "  sudo xl console $VM_NAME          # see app output"
     warn "  sudo xl network-list $VM_NAME     # check vif"
-    warn "  brctl show xenbr0                  # check bridge members"
-    warn "  ping $UNIKERNEL_IP                 # test connectivity"
+    warn "  brctl show $BRIDGE                # check bridge members"
+    warn "  ip addr show $BRIDGE              # verify 10.0.0.1/24 on bridge"
+    warn "  ping $UNIKERNEL_IP                # test connectivity from dom0"
     warn ""
+    warn "If bridge has no IP: sudo bash setup/01c-setup-unikernel-bridge.sh"
     warn "When done:  sudo xl destroy $VM_NAME"
 fi
 
@@ -303,4 +303,5 @@ log ""
 # Save config for Jitsu step
 echo "$UNIKERNEL_IP" > "${SCRIPT_DIR}/.unikernel-ip"
 echo "$XEN_IMAGE" > "${SCRIPT_DIR}/.last-built-image"
-echo "$BRIDGE" > "${SCRIPT_DIR}/.bridge"
+echo "$BRIDGE"        > "${SCRIPT_DIR}/.bridge"
+echo "$UNIKERNEL_IP" > "${SCRIPT_DIR}/.unikernel-ip-last"
