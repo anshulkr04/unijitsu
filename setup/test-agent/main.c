@@ -3,14 +3,20 @@
  *
  * ONLY uses POSIX headers that Unikraft nolibc + posix libs actually provide.
  * NO: <stdlib.h>, <arpa/inet.h>, <time.h>, <uk/sched.h>
- * YES: <stdio.h>, <string.h>, <unistd.h>, <sys/socket.h>, <netinet/in.h>
+ * YES: <stdio.h>, <string.h>, <errno.h>, <unistd.h>, <sys/socket.h>, <netinet/in.h>
  *
  * Uses sleep() (from posix-time) to yield to the cooperative scheduler,
  * which lets netfront + lwIP initialize before we call socket().
+ *
+ * DIAGNOSTIC: prints errno on every socket() failure so we stop guessing.
+ *   errno=38 (ENOSYS)       -> CONFIG_LIBPOSIX_FDTAB not compiled in
+ *   errno=97 (EAFNOSUPPORT) -> lwIP AF_INET not yet registered
+ *   errno=12 (ENOMEM)       -> lwIP pool exhausted
  */
 
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>        /* errno values */
 #include <unistd.h>       /* read, write, close, sleep */
 #include <sys/socket.h>   /* socket, bind, listen, accept */
 #include <netinet/in.h>   /* sockaddr_in, INADDR_ANY, htons */
@@ -80,38 +86,40 @@ static void handle_request(int client_fd)
 int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
 {
     printf("=== Unikraft Test Agent ===\n");
-    printf("Starting HTTP server on port %d...\n", PORT);
+    printf("Build: " __DATE__ " " __TIME__ "\n");
 
     /*
-     * On Xen PV with cooperative scheduling, the network stack (netfront +
-     * lwIP) initializes via Xen event channel callbacks. These only fire
-     * when we yield to the scheduler. sleep() does this — it internally
-     * blocks the thread and lets the scheduler run other work (including
-     * processing Xen events that bring up the network).
+     * Probe socket() every 2s and print errno each time.
+     * This gives a running diagnostic log on xl console:
      *
-     * A busy-wait spin loop will NOT work because the cooperative scheduler
-     * never gets a chance to run.
+     *   errno=38 (ENOSYS)       -> CONFIG_LIBPOSIX_FDTAB missing in Kraftfile
+     *   errno=97 (EAFNOSUPPORT) -> fdtab OK but lwIP not registered AF_INET yet
+     *   errno=12 (ENOMEM)       -> lwIP pool not initialized
+     *
+     * If errno=38 forever: rebuild with CONFIG_LIBPOSIX_FDTAB: 'y'
+     * If errno=97 forever: lwIP init not running (scheduler/threading issue)
      */
-    printf("Waiting for network stack to initialize...\n");
-    sleep(15);  /* lwIP + netfront init takes several seconds on Xen PV */
+    printf("Probing socket(AF_INET, SOCK_STREAM) every 2s (max 60s)...\n");
 
     int server_fd = -1;
-    int retries = 10;
-    while (server_fd < 0 && retries > 0) {
+    int elapsed = 0;
+    while (server_fd < 0 && elapsed < 60) {
         server_fd = socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd < 0) {
-            printf("socket() failed, waiting... (%d attempts left)\n", retries);
-            sleep(1);  /* Yield to scheduler between retries */
-            retries--;
+            printf("[t=%02ds] socket() FAILED errno=%d\n", elapsed, errno);
+            sleep(2);
+            elapsed += 2;
         }
     }
     if (server_fd < 0) {
-        printf("Error: could not create socket after retries\n");
-        printf("VM staying alive for debugging — use: xl console test-agent\n");
-        /* Keep VM alive so you can xl console to read this output */
+        printf("FATAL: socket() FAILED for %ds, last errno=%d\n", elapsed, errno);
+        printf("  errno=38 -> CONFIG_LIBPOSIX_FDTAB: 'y' missing\n");
+        printf("  errno=97 -> lwIP AF_INET not registered (lwIP init broken)\n");
+        printf("  errno=12 -> lwIP memory pool issue\n");
+        printf("Keeping VM alive: sudo xl console test-agent\n");
         while (1) { sleep(60); }
     }
-    printf("Socket created (fd=%d)\n", server_fd);
+    printf("[OK] socket() at t=%ds fd=%d\n", elapsed, server_fd);
 
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -123,22 +131,23 @@ int main(int argc __attribute__((unused)), char *argv[] __attribute__((unused)))
     addr.sin_port = htons(PORT);
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        printf("Error: bind() failed\n");
-        printf("VM staying alive for debugging\n");
+        printf("FATAL: bind(0.0.0.0:%d) FAILED errno=%d\n", PORT, errno);
+        printf("  errno=99 (EADDRNOTAVAIL) -> IP not yet on netdev\n");
+        printf("  errno=98 (EADDRINUSE)    -> port in use\n");
+        printf("Keeping VM alive: sudo xl console test-agent\n");
         while (1) { sleep(60); }
     }
-    printf("Bound to 0.0.0.0:%d\n", PORT);
+    printf("[OK] bind(0.0.0.0:%d)\n", PORT);
 
     if (listen(server_fd, BACKLOG) < 0) {
-        printf("Error: listen() failed\n");
-        printf("VM staying alive for debugging\n");
+        printf("FATAL: listen() errno=%d\n", errno);
         while (1) { sleep(60); }
     }
 
-    printf("Listening on 0.0.0.0:%d\n", PORT);
-    printf("  GET  /health  — health check\n");
-    printf("  POST /invoke  — agent invocation\n");
-    printf("Ready.\n");
+    printf("[OK] HTTP server READY on 0.0.0.0:%d\n", PORT);
+    printf("  GET  /health  -> health check\n");
+    printf("  POST /invoke  -> agent invocation\n");
+    printf("READY. Waiting for connections...\n");
 
     while (1) {
         struct sockaddr_in client_addr;

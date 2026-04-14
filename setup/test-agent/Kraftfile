@@ -16,15 +16,14 @@ unikraft:
     CONFIG_LIBPOSIX_USER: 'y'
     CONFIG_LIBPOSIX_SYSINFO: 'y'
 
-    # File descriptor table — required by posix-socket to store socket fds
-    # Without this, socket() returns -1 immediately (no fd backing store)
-    CONFIG_LIBVFSCORE: 'y'
-    CONFIG_LIBRAMFS: 'y'
-    CONFIG_LIBVFSCORE_AUTOMOUNT_ROOTFS: 'y'
-    CONFIG_LIBVFSCORE_ROOTFS_RAMFS: 'y'
+    # File descriptor table — required by posix-socket in Unikraft 0.20
+    # Unikraft 0.20 uses posix-fdtab, NOT vfscore, as the socket fd backing store
+    # Without this, socket() returns -1 (ENOSYS) on every call
+    CONFIG_LIBPOSIX_FDTAB: 'y'
 
-    # Network device abstraction layer
+    # Network device abstraction layer + polling (uknetdev polls netfront for packets)
     CONFIG_LIBUKNETDEV: 'y'
+    CONFIG_LIBUKNETDEV_DISPATCHERTHREADS: 'y'
 
     # Network stack (lwIP) — static IP only, no DHCP
     CONFIG_LIBLWIP: 'y'

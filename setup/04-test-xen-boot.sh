@@ -212,35 +212,25 @@ log "  sudo xl console $VM_NAME"
 log "  (Press Ctrl+] to detach without killing the VM)"
 log ""
 
-# The unikernel sleeps 15s before attempting socket().
-# Wait here so connectivity tests don't run too early.
-log "Waiting 20s for unikernel network to finish initializing..."
-for i in {1..20}; do
-    printf "\r[+] %2d/20s..." "$i"
+# unikernel now probes socket() every 2s for up to 60s and prints errno each
+# time — no upfront sleep needed. We poll HTTP directly from dom0.
+log "Polling HTTP until unikernel is ready (max 75s)..."
+HTTP_RESPONSE="000"
+for i in $(seq 1 75); do
+    CODE=$(curl -s -o /tmp/uk_response.txt -w "%{http_code}" \
+        "http://${UNIKERNEL_IP}:8080/health" \
+        --connect-timeout 2 --max-time 3 2>/dev/null || echo "000")
+    if [[ "$CODE" == "200" ]]; then
+        HTTP_RESPONSE="200"
+        log "HTTP 200 OK after ${i}s!"
+        break
+    fi
+    printf "\r[+] %2ds — HTTP=%s, ping=%s..." \
+        "$i" "$CODE" \
+        "$(ping -c1 -W1 $UNIKERNEL_IP &>/dev/null && echo OK || echo -)"
     sleep 1
 done
 echo ""
-
-# ─── Test connectivity ───────────────────────────────────────────────────────
-
-log "Testing reachability..."
-for i in {1..45}; do
-    if ping -c 1 -W 1 "$UNIKERNEL_IP" &>/dev/null; then
-        log "Unikernel is responding to ping after ${i}s!"
-        break
-    fi
-    if [[ $i -eq 45 ]]; then
-        warn "Unikernel not responding to ping after 45s."
-        warn "ICMP may not be enabled in lwIP config — trying HTTP directly."
-    fi
-    sleep 1
-done
-
-# Test HTTP
-log "Testing HTTP endpoint (curl with 10s timeout)..."
-HTTP_RESPONSE=$(curl -s -o /tmp/uk_response.txt -w "%{http_code}" \
-    "http://${UNIKERNEL_IP}:8080/health" --connect-timeout 10 --max-time 15 \
-    2>/dev/null || echo "000")
 
 if [[ "$HTTP_RESPONSE" == "200" ]]; then
     log "HTTP health check: 200 OK"
@@ -248,7 +238,7 @@ if [[ "$HTTP_RESPONSE" == "200" ]]; then
 else
     warn "HTTP health check returned: $HTTP_RESPONSE"
     warn ""
-    warn "─── Post-wait console snapshot (shows what unikernel did after sleep) ───"
+    warn "─── Console snapshot (errno output shows WHY socket() is failing) ───"
     timeout 6 xl console "$VM_NAME" 2>/dev/null &
     CONSOLE_PID2=$!
     sleep 4
