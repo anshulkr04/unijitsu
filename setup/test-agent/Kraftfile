@@ -23,7 +23,7 @@ unikraft:
 
     # Network device abstraction layer + polling (uknetdev polls netfront for packets)
     CONFIG_LIBUKNETDEV: 'y'
-    CONFIG_LIBUKNETDEV_DISPATCHERTHREADS: 'y'
+    CONFIG_LIBUKNETDEV_DISPATCHERTHREADS: 'n'
 
     # Network stack (lwIP) — static IP only, no DHCP
     CONFIG_LIBLWIP: 'y'
@@ -31,16 +31,18 @@ unikraft:
     # This is SEPARATE from CONFIG_LWIP_SOCKET (upstream lwIP internal flag)
     # Without it, AF_INET is never registered -> socket() returns EAFNOSUPPORT (97)
     CONFIG_LIBLWIP_SOCKETS: 'y'
-    CONFIG_LWIP_SOCKET: 'y'
+    CONFIG_LWIP_SOCKET: 'n'
     CONFIG_LWIP_IPV4: 'y'
     CONFIG_LWIP_TCP: 'y'
     CONFIG_LWIP_UDP: 'y'
     CONFIG_LWIP_DHCP: 'n'
     CONFIG_LWIP_DNS: 'n'
     CONFIG_LWIP_ARP: 'y'
+    CONFIG_LIBLWIP_INIT: 'y'
 
     # Xen-specific
     CONFIG_XEN_NETFRONT: 'y'
+    CONFIG_LIBUKNETDEV_XEN: 'y'
 
     # Network device config via cmdline (netdev.ip0=...)
     # UK_LIBPARAM_PARAM_ARR_ALIAS creates indexed params: netdev.ip0, netdev.ip1, ...
@@ -59,6 +61,7 @@ unikraft:
 
     # Time (provides sleep/nanosleep for yielding)
     CONFIG_LIBPOSIX_TIME: 'y'
+
 
 targets:
   - platform: xen
