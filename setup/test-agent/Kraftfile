@@ -16,18 +16,31 @@ unikraft:
     CONFIG_LIBPOSIX_USER: 'y'
     CONFIG_LIBPOSIX_SYSINFO: 'y'
 
+    # File descriptor table — required by posix-socket to store socket fds
+    # Without this, socket() returns -1 immediately (no fd backing store)
+    CONFIG_LIBVFSCORE: 'y'
+    CONFIG_LIBRAMFS: 'y'
+    CONFIG_LIBVFSCORE_AUTOMOUNT_ROOTFS: 'y'
+    CONFIG_LIBVFSCORE_ROOTFS_RAMFS: 'y'
+
+    # Network device abstraction layer
+    CONFIG_LIBUKNETDEV: 'y'
+
     # Network stack (lwIP) — static IP only, no DHCP
     CONFIG_LIBLWIP: 'y'
     CONFIG_LWIP_SOCKET: 'y'
     CONFIG_LWIP_IPV4: 'y'
     CONFIG_LWIP_TCP: 'y'
+    CONFIG_LWIP_UDP: 'y'
     CONFIG_LWIP_DHCP: 'n'
     CONFIG_LWIP_DNS: 'n'
+    CONFIG_LWIP_ARP: 'y'
 
     # Xen-specific
     CONFIG_XEN_NETFRONT: 'y'
 
-    # Network device config via cmdline (netdev.ip=...)
+    # Network device config via cmdline (netdev.ip0=...)
+    # UK_LIBPARAM_PARAM_ARR_ALIAS creates indexed params: netdev.ip0, netdev.ip1, ...
     CONFIG_LIBUKNETDEV_EINFO_LIBPARAM: 'y'
 
     # Memory

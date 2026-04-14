@@ -145,9 +145,9 @@ vcpus   = 1
 vif     = ['bridge=$BRIDGE']
 
 # --- Boot command line ---
-# Unikraft netdev.ip format: IP/CIDR:gateway:dns0:dns1:hostname:domain
-# See: lib/uknetdev/netdev.c UK_LIBPARAM_PARAM_ARR_ALIAS
-cmdline = "netdev.ip=$UK_NETDEV_IP --"
+# Unikraft netdev.ip indexed param format: netdev.ip0=IP/CIDR:gateway:dns0
+# UK_LIBPARAM_PARAM_ARR_ALIAS creates netdev.ip0, netdev.ip1, ...
+cmdline = "netdev.ip0=$UK_NETDEV_IP --"
 
 # --- Console ---
 # Enable Xen console for debugging
@@ -155,7 +155,7 @@ serial  = "pty"
 EOF
 
 log "Xen config written to $XEN_CFG"
-log "  cmdline: netdev.ip=$UK_NETDEV_IP"
+log "  cmdline: netdev.ip0=$UK_NETDEV_IP"
 
 # ─── Boot the unikernel ─────────────────────────────────────────────────────
 
