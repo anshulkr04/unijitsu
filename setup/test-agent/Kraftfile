@@ -27,6 +27,10 @@ unikraft:
 
     # Network stack (lwIP) — static IP only, no DHCP
     CONFIG_LIBLWIP: 'y'
+    # CONFIG_LIBLWIP_SOCKETS: Unikraft-specific glue wiring lwIP to POSIX sockets
+    # This is SEPARATE from CONFIG_LWIP_SOCKET (upstream lwIP internal flag)
+    # Without it, AF_INET is never registered -> socket() returns EAFNOSUPPORT (97)
+    CONFIG_LIBLWIP_SOCKETS: 'y'
     CONFIG_LWIP_SOCKET: 'y'
     CONFIG_LWIP_IPV4: 'y'
     CONFIG_LWIP_TCP: 'y'
@@ -47,9 +51,11 @@ unikraft:
     CONFIG_LIBUKALLOCBBUDDY: 'y'
     CONFIG_LIBUKFALLOCBUDDY: 'y'
 
-    # Scheduler
+    # Scheduler — PREEMPTIVE is required so lwIP init thread gets CPU time
+    # Cooperative scheduling causes errno=97 forever: main() sleep() calls
+    # are not sufficient to yield to lwIP's initialization thread reliably
     CONFIG_LIBUKSCHED: 'y'
-    CONFIG_LIBUKSCHEDCOOP: 'y'
+    CONFIG_LIBUKSCHED_PREEMPTIVE: 'y'
 
     # Time (provides sleep/nanosleep for yielding)
     CONFIG_LIBPOSIX_TIME: 'y'
