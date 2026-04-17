@@ -148,6 +148,24 @@ log ""
 log "  Image: $XEN_IMAGE"
 log "  Size:  $IMAGE_SIZE"
 log ""
+
+# ─── Dump active kconfig to stop guessing what's compiled in ───────────────
+
+DOTCONFIG=$(find "$AGENT_DIR" -path "*/.unikraft/build/.config" -type f 2>/dev/null | head -1)
+if [[ -n "$DOTCONFIG" ]]; then
+    log "Active kconfig (networking + socket symbols from $DOTCONFIG):"
+    echo ""
+    grep -E "^CONFIG_(LIBLWIP|LWIP|LIBPOSIX_SOCKET|LIBPOSIX_FDTAB|LIBUKNETDEV|LIBUKSCHED|XEN_NET)" \
+        "$DOTCONFIG" | sort | while read line; do echo "    $line"; done
+    echo ""
+    log "Full .config saved at: $DOTCONFIG"
+    log "To see all: grep -v '^#' $DOTCONFIG | grep -v '^$'"
+else
+    warn "Could not find .config — inspect manually:"
+    warn "  find $AGENT_DIR -name '.config' | head -5"
+fi
+
+log ""
 log "  NEXT STEP: sudo bash 04-test-xen-boot.sh"
 log ""
 

@@ -145,9 +145,10 @@ vcpus   = 1
 vif     = ['bridge=$BRIDGE']
 
 # --- Boot command line ---
-# Unikraft netdev.ip indexed param format: netdev.ip0=IP/CIDR:gateway:dns0
-# UK_LIBPARAM_PARAM_ARR_ALIAS creates netdev.ip0, netdev.ip1, ...
-cmdline = "netdev.ip0=$UK_NETDEV_IP --"
+# Unikraft libukboot parses cmdline before '--', passing everything after as app argv.
+# netdev.ip0= sets static IP/CIDR:GW:DNS on the first network device.
+# No trailing '--' so all params are interpreted as boot params (not app argv).
+cmdline = "netdev.ip0=$UK_NETDEV_IP"
 
 # --- Console ---
 # Enable Xen console for debugging

@@ -27,11 +27,10 @@ unikraft:
 
     # Network stack (lwIP) — static IP only, no DHCP
     CONFIG_LIBLWIP: 'y'
-    # CONFIG_LIBLWIP_SOCKETS: Unikraft-specific glue wiring lwIP to POSIX sockets
-    # This is SEPARATE from CONFIG_LWIP_SOCKET (upstream lwIP internal flag)
-    # Without it, AF_INET is never registered -> socket() returns EAFNOSUPPORT (97)
-    CONFIG_LIBLWIP_SOCKETS: 'y'
-    CONFIG_LWIP_SOCKET: 'n'
+    # CONFIG_LWIP_SOCKET MUST BE 'y' — this enables lwIP's socket API which
+    # registers AF_INET with Unikraft's socket dispatch layer.
+    # Setting it to 'n' directly causes errno=97 (EAFNOSUPPORT) on socket().
+    CONFIG_LWIP_SOCKET: 'y'
     CONFIG_LWIP_IPV4: 'y'
     CONFIG_LWIP_TCP: 'y'
     CONFIG_LWIP_UDP: 'y'
@@ -53,11 +52,11 @@ unikraft:
     CONFIG_LIBUKALLOCBBUDDY: 'y'
     CONFIG_LIBUKFALLOCBUDDY: 'y'
 
-    # Scheduler — PREEMPTIVE is required so lwIP init thread gets CPU time
-    # Cooperative scheduling causes errno=97 forever: main() sleep() calls
-    # are not sufficient to yield to lwIP's initialization thread reliably
+    # Scheduler — preemptive so lwIP init thread gets CPU time
+    # In Unikraft 0.20 the preemptive scheduler is a separate library: libukschedpreempt
+    # NOT CONFIG_LIBUKSCHED_PREEMPTIVE (that key does not exist)
     CONFIG_LIBUKSCHED: 'y'
-    CONFIG_LIBUKSCHED_PREEMPTIVE: 'y'
+    CONFIG_LIBUKSCHEDPREEMPT: 'y'
 
     # Time (provides sleep/nanosleep for yielding)
     CONFIG_LIBPOSIX_TIME: 'y'
