@@ -41,14 +41,19 @@ unikraft:
 # no liblwip directory appears in the build and AF_INET is never registered.
 libraries:
   lwip:
+    source: https://github.com/unikraft/lib-lwip.git
     version: stable
     kconfig:
-      # lwIP socket API — MUST be 'y', this registers AF_INET with posix-socket
+      CONFIG_LWIP_UKNETDEV: 'y'
+      CONFIG_LWIP_AUTOIFACE: 'y'
       CONFIG_LWIP_SOCKET: 'y'
+      CONFIG_LWIP_THREADS: 'y'
+      CONFIG_LWIP_HEAP: 'y'
       CONFIG_LWIP_IPV4: 'y'
       CONFIG_LWIP_TCP: 'y'
       CONFIG_LWIP_UDP: 'y'
       CONFIG_LWIP_ARP: 'y'
+      CONFIG_LWIP_ICMP: 'y'
       CONFIG_LWIP_DHCP: 'n'
       CONFIG_LWIP_DNS: 'n'
 
