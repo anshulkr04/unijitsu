@@ -158,6 +158,29 @@ EOF
 log "Xen config written to $XEN_CFG"
 log "  cmdline: netdev.ip0=$UK_NETDEV_IP"
 
+# ─── Dump actual .config so we know what's really compiled in ───────────────
+
+DOTCONFIG=$(find "$(dirname "$XEN_IMAGE")" -maxdepth 2 -name ".config" \
+    -not -name ".config.*" 2>/dev/null | head -1)
+if [[ -z "$DOTCONFIG" ]]; then
+    DOTCONFIG=$(find "${SCRIPT_DIR}/test-agent" -path "*/.unikraft/build/.config" \
+        -type f 2>/dev/null | head -1)
+fi
+
+if [[ -n "$DOTCONFIG" ]]; then
+    log ""
+    log "─── Active kconfig (from $DOTCONFIG) ───"
+    grep -E "^(CONFIG_LIBLWIP|CONFIG_LWIP_SOCKET|CONFIG_LWIP_IPV4|CONFIG_LWIP_TCP|CONFIG_LWIP_ARP|CONFIG_LIBPOSIX_SOCKET|CONFIG_LIBPOSIX_FDTAB|CONFIG_LIBUKSCHED|CONFIG_XEN_NETFRONT|CONFIG_LIBUKNETDEV)" \
+        "$DOTCONFIG" 2>/dev/null | sort | while IFS= read -r line; do
+        log "  $line"
+    done
+    log "─── end kconfig ───"
+    log ""
+else
+    warn "Could not find .config — run manually:"
+    warn "  find setup/test-agent -name '.config' | head -3"
+fi
+
 # ─── Boot the unikernel ─────────────────────────────────────────────────────
 
 log ""

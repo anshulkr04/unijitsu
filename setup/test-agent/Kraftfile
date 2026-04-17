@@ -15,52 +15,42 @@ unikraft:
     CONFIG_LIBPOSIX_PROCESS: 'y'
     CONFIG_LIBPOSIX_USER: 'y'
     CONFIG_LIBPOSIX_SYSINFO: 'y'
-
-    # File descriptor table — required by posix-socket in Unikraft 0.20
-    # Unikraft 0.20 uses posix-fdtab, NOT vfscore, as the socket fd backing store
-    # Without this, socket() returns -1 (ENOSYS) on every call
     CONFIG_LIBPOSIX_FDTAB: 'y'
 
-    # Network device abstraction layer + polling (uknetdev polls netfront for packets)
+    # Network device abstraction layer
     CONFIG_LIBUKNETDEV: 'y'
-    CONFIG_LIBUKNETDEV_DISPATCHERTHREADS: 'n'
-
-    # Network stack (lwIP) — static IP only, no DHCP
-    CONFIG_LIBLWIP: 'y'
-    # CONFIG_LWIP_SOCKET MUST BE 'y' — this enables lwIP's socket API which
-    # registers AF_INET with Unikraft's socket dispatch layer.
-    # Setting it to 'n' directly causes errno=97 (EAFNOSUPPORT) on socket().
-    CONFIG_LWIP_SOCKET: 'y'
-    CONFIG_LWIP_IPV4: 'y'
-    CONFIG_LWIP_TCP: 'y'
-    CONFIG_LWIP_UDP: 'y'
-    CONFIG_LWIP_DHCP: 'n'
-    CONFIG_LWIP_DNS: 'n'
-    CONFIG_LWIP_ARP: 'y'
-    CONFIG_LIBLWIP_INIT: 'y'
-
-    # Xen-specific
-    CONFIG_XEN_NETFRONT: 'y'
-    CONFIG_LIBUKNETDEV_XEN: 'y'
-
-    # Network device config via cmdline (netdev.ip0=...)
-    # UK_LIBPARAM_PARAM_ARR_ALIAS creates indexed params: netdev.ip0, netdev.ip1, ...
     CONFIG_LIBUKNETDEV_EINFO_LIBPARAM: 'y'
 
-    # Memory
+    # Xen netfront driver
+    CONFIG_XEN_NETFRONT: 'y'
+
+    # Memory allocators
     CONFIG_LIBUKALLOC: 'y'
     CONFIG_LIBUKALLOCBBUDDY: 'y'
     CONFIG_LIBUKFALLOCBUDDY: 'y'
 
-    # Scheduler — preemptive so lwIP init thread gets CPU time
-    # In Unikraft 0.20 the preemptive scheduler is a separate library: libukschedpreempt
-    # NOT CONFIG_LIBUKSCHED_PREEMPTIVE (that key does not exist)
+    # Cooperative scheduler (preemptive key not recognized in 0.20)
     CONFIG_LIBUKSCHED: 'y'
-    CONFIG_LIBUKSCHEDPREEMPT: 'y'
+    CONFIG_LIBUKSCHEDCOOP: 'y'
 
-    # Time (provides sleep/nanosleep for yielding)
+    # Time
     CONFIG_LIBPOSIX_TIME: 'y'
 
+# lwIP MUST be declared here as an external library — kconfig CONFIG_LIBLWIP
+# alone does NOT cause kraft to fetch/build it. Without this section,
+# no liblwip directory appears in the build and AF_INET is never registered.
+libraries:
+  lwip:
+    version: stable
+    kconfig:
+      # lwIP socket API — MUST be 'y', this registers AF_INET with posix-socket
+      CONFIG_LWIP_SOCKET: 'y'
+      CONFIG_LWIP_IPV4: 'y'
+      CONFIG_LWIP_TCP: 'y'
+      CONFIG_LWIP_UDP: 'y'
+      CONFIG_LWIP_ARP: 'y'
+      CONFIG_LWIP_DHCP: 'n'
+      CONFIG_LWIP_DNS: 'n'
 
 targets:
   - platform: xen
